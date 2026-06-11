@@ -13,18 +13,7 @@ class SAM3:
                  compile=False,
                  **kwargs):
 
-        if multi_mask:
-            raise ValueError("SAM3 multi-mask output is not supported in tracking-only mode.")
-
-        try:
-            from sam3.model_builder import build_sam3_video_model
-        except ImportError as exc:
-            raise ImportError(
-                "SAM3 is not installed. Clone facebookresearch/sam3 into thirdparty/sam3, "
-                "run `pip install -e thirdparty/sam3`, accept access to "
-                "https://huggingface.co/facebook/sam3, and run `hf auth login`."
-            ) from exc
-
+        from sam3.model_builder import build_sam3_video_model
         self.model = build_sam3_video_model(
             checkpoint_path=model_weights,
             bpe_path=bpe_path,
@@ -110,6 +99,8 @@ class SAM3:
         if mask.ndim != 2:
             raise ValueError(f"Expected a 2D mask, got shape {tuple(mask.shape)}.")
 
+        self._cache_frame_features(inference_state, frame_idx)
+
         inference_state['tracker_inference_states'] = self.model._tracker_add_new_objects(
             frame_idx=frame_idx,
             num_frames=inference_state['num_frames'],
@@ -137,6 +128,20 @@ class SAM3:
     def _init_tubelet_state(self, inference_state):
         inference_state['obj_idx_to_id'] = dict()
         inference_state['output_dict_per_obj'] = dict()
+
+    def _cache_frame_features(self, inference_state, frame_idx):
+        if frame_idx in inference_state['feature_cache']:
+            return
+
+        self.model.run_backbone_and_detection(
+            frame_idx=frame_idx,
+            num_frames=inference_state['num_frames'],
+            reverse=False,
+            input_batch=inference_state['input_batch'],
+            geometric_prompt=inference_state['constants']['empty_geometric_prompt'],
+            feature_cache=inference_state['feature_cache'],
+            allow_new_detections=False,
+        )
 
     def _format_output(self, output, inference_state):
         height = inference_state['orig_height']

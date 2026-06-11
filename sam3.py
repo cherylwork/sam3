@@ -120,8 +120,25 @@ class SAM3:
         return frame_idx, [int(obj_id)], mask.unsqueeze(0).unsqueeze(0)
 
     def propagate_in_video(self, inference_state, **kwargs):
-        for frame_idx, output in self.model.propagate_in_video(inference_state=inference_state, **kwargs):
-            out_obj_ids, out_mask_logits, out_scores = self._format_output(output, inference_state)
+        frame_outputs = dict()
+        for tracker_state in inference_state['tracker_inference_states']:
+            for frame_idx, obj_ids, _, video_res_masks, obj_scores in self.model.tracker.propagate_in_video(
+                tracker_state,
+                start_frame_idx=kwargs.get('start_frame_idx', None),
+                max_frame_num_to_track=kwargs.get('max_frame_num_to_track', None),
+                reverse=kwargs.get('reverse', False),
+                tqdm_disable=True,
+            ):
+                if frame_idx not in frame_outputs:
+                    frame_outputs[frame_idx] = {'obj_ids': [], 'masks': [], 'scores': []}
+                frame_outputs[frame_idx]['obj_ids'] += [int(obj_id) for obj_id in obj_ids]
+                frame_outputs[frame_idx]['masks'].append(video_res_masks)
+                frame_outputs[frame_idx]['scores'].append(obj_scores.reshape(-1))
+
+        for frame_idx in sorted(frame_outputs.keys()):
+            out_obj_ids = frame_outputs[frame_idx]['obj_ids']
+            out_mask_logits = torch.cat(frame_outputs[frame_idx]['masks'], dim=0)
+            out_scores = torch.cat(frame_outputs[frame_idx]['scores'], dim=0).tolist()
             self._store_output_scores(inference_state, frame_idx, out_obj_ids, out_scores)
             yield frame_idx, out_obj_ids, out_mask_logits
 
